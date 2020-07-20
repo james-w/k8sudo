@@ -1,0 +1,83 @@
+
+---
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.2.5
+  creationTimestamp: null
+  name: sudorequests.k8sudo.jetstack.io
+spec:
+  group: k8sudo.jetstack.io
+  names:
+    kind: SudoRequest
+    listKind: SudoRequestList
+    plural: sudorequests
+    singular: sudorequest
+  scope: Cluster
+  subresources:
+    status: {}
+  validation:
+    openAPIV3Schema:
+      description: SudoRequest is the Schema for the sudorequests API
+      properties:
+        apiVersion:
+          description: 'APIVersion defines the versioned schema of this representation
+            of an object. Servers should convert recognized schemas to the latest
+            internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+          type: string
+        kind:
+          description: 'Kind is a string value representing the REST resource this
+            object represents. Servers may infer this from the endpoint the client
+            submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+          type: string
+        metadata:
+          type: object
+        spec:
+          description: SudoRequestSpec defines the desired state of SudoRequest
+          properties:
+            expires:
+              description: When the request should expire and access should be revoked
+              format: date-time
+              type: string
+            reason:
+              description: A description of why the escalation is needed
+              type: string
+            role:
+              description: The Role to give the user access to
+              type: string
+            user:
+              description: The user to grant permissions to
+              type: string
+          type: object
+        status:
+          description: SudoRequestStatus defines the observed state of SudoRequest
+          properties:
+            clusterRoleBinding:
+              description: The secret holding the credentials if the request has been
+                granted
+              type: string
+            expires:
+              description: When the escalation will expire This applies regardless
+                of what expiration time (if any) is set in the spec.
+              format: date-time
+              type: string
+            reason:
+              description: The reason for the status if known
+              type: string
+            status:
+              description: The status of the request
+              type: string
+          type: object
+      type: object
+  version: v1alpha1
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+status:
+  acceptedNames:
+    kind: ""
+    plural: ""
+  conditions: []
+  storedVersions: []

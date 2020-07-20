@@ -1,0 +1,7 @@
+apiVersion: k8sudo.jetstack.io/v1alpha1
+kind: SudoRequest
+metadata:
+  name: sudorequest-sample
+spec:
+  user: kubernetes-admin
+  role: bar

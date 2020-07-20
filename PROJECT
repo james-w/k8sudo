@@ -1,0 +1,7 @@
+domain: jetstack.io
+repo: jetstack.io/k8sudo
+resources:
+- group: k8sudo
+  kind: SudoRequest
+  version: v1alpha1
+version: "2"
