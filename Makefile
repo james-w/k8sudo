@@ -18,10 +18,10 @@ all: manager
 
 # Run tests
 test: generate fmt vet manifests
-	go test ./controllers -coverprofile cover.out
+	go test ./controllers ./api/... -coverprofile cover.out
 
 integration: generate fmt vet manifests test
-	env "TEST_ASSET_KUBE_APISERVER=$(TEST_ASSET_KUBE_APISERVER)" "TEST_ASSET_ETCD=$(TEST_ASSET_ETCD)" go test ./test/integration
+	env "TEST_ASSET_KUBE_APISERVER=$(TEST_ASSET_KUBE_APISERVER)" "TEST_ASSET_ETCD=$(TEST_ASSET_ETCD)" go test ./test/integration/...
 
 # Build manager binary
 manager: generate fmt vet

@@ -1,6 +1,4 @@
 /*
-
-
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -14,10 +12,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package integration
+package sudorequest_controller
 
 import (
-	"path/filepath"
 	"testing"
 
 	. "github.com/onsi/ginkgo"
@@ -33,51 +30,34 @@ import (
 
 	k8sudov1alpha1 "jetstack.io/k8sudo/api/v1alpha1"
 	"jetstack.io/k8sudo/controllers"
+	"jetstack.io/k8sudo/test/integration"
 	// +kubebuilder:scaffold:imports
 )
-
-// These tests use Ginkgo (BDD-style Go testing framework). Refer to
-// http://onsi.github.io/ginkgo/ to learn more about Ginkgo.
 
 var cfg *rest.Config
 var k8sClient client.Client
 var k8sManager ctrl.Manager
 var testEnv *envtest.Environment
 var stopManager chan struct{}
+var cleanup func() error
 
 func TestAPIs(t *testing.T) {
 	RegisterFailHandler(Fail)
 
 	RunSpecsWithDefaultAndCustomReporters(t,
-		"Controller Suite",
+		"SudoRequest Controller integration Suite",
 		[]Reporter{printer.NewlineReporter{}})
 }
 
 var _ = BeforeSuite(func(done Done) {
 	logf.SetLogger(zap.LoggerTo(GinkgoWriter, true))
 
-	By("bootstrapping test environment")
-	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
-		ErrorIfCRDPathMissing: true,
-	}
+	testEnv, cfg = integration.StartTestEnv()
+	k8sManager, cleanup = integration.SetupManager(cfg, false)
 
-	var err error
-	cfg, err = testEnv.Start()
-	Expect(err).ToNot(HaveOccurred())
-	Expect(cfg).ToNot(BeNil())
-
-	err = k8sudov1alpha1.AddToScheme(scheme.Scheme)
+	err := k8sudov1alpha1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
-	// +kubebuilder:scaffold:scheme
-
-	k8sManager, err = ctrl.NewManager(cfg, ctrl.Options{
-		Scheme:                 scheme.Scheme,
-		MetricsBindAddress:     "0",
-		HealthProbeBindAddress: "0",
-	})
-	Expect(err).ToNot(HaveOccurred())
 	err = (&controllers.SudoRequestReconciler{
 		Client: k8sManager.GetClient(),
 		Log:    ctrl.Log.WithName("controllers").WithName("SudoRequest"),
@@ -85,12 +65,7 @@ var _ = BeforeSuite(func(done Done) {
 	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 
-	stopManager = make(chan struct{})
-
-	go func() {
-		err = k8sManager.Start(stopManager)
-		Expect(err).ToNot(HaveOccurred())
-	}()
+	stopManager = integration.StartManager(k8sManager)
 
 	k8sClient = k8sManager.GetClient()
 	Expect(k8sClient).ToNot(BeNil())
@@ -99,10 +74,7 @@ var _ = BeforeSuite(func(done Done) {
 }, 60)
 
 var _ = AfterSuite(func() {
-	By("tearing down the test environment")
-	if stopManager != nil {
-		close(stopManager)
-	}
-	err := testEnv.Stop()
+	integration.Shutdown(testEnv, stopManager)
+	err := cleanup()
 	Expect(err).ToNot(HaveOccurred())
 })

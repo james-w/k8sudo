@@ -12,10 +12,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package integration
+package sudorequest_controller
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo"
@@ -95,6 +96,7 @@ var _ = Describe("SudoRequest controller", func() {
 			ctx := context.Background()
 			req := initSudoRequest("no-user")
 			req.Spec.Role = "role"
+			req.Spec.User = ""
 			createdSudoRequest := createSudoRequest(ctx, req, timeout, interval)
 			By("Checking the status is Error")
 			Consistently(GetStatus(ctx, lookupKey(createdSudoRequest)), duration, interval).Should(Equal(k8sudov1alpha1.SudoRequestStatusError))
@@ -105,6 +107,7 @@ var _ = Describe("SudoRequest controller", func() {
 			By("Creating a new SudoRequest")
 			ctx := context.Background()
 			req := initSudoRequest("no-role")
+			req.Spec.Role = ""
 			req.Spec.User = "user"
 			createdSudoRequest := createSudoRequest(ctx, req, timeout, interval)
 			By("Checking the status is Error")
@@ -129,7 +132,7 @@ var _ = Describe("SudoRequest controller", func() {
 			req := initSudoRequest("accepted")
 			req.Spec.User = "user"
 			req.Spec.Role = "role"
-			req.Spec.Expires = &metav1.Time{Time: time.Now().Add(3 * time.Second)}
+			req.Spec.Expires = &metav1.Time{Time: time.Now().Add(duration).Add(2 * time.Second)}
 			createdSudoRequest := createSudoRequest(ctx, req, timeout, interval)
 			By("Checking the status is Ready")
 			Consistently(GetStatus(ctx, lookupKey(createdSudoRequest)), duration, interval).Should(Equal(k8sudov1alpha1.SudoRequestStatusReady))
@@ -142,6 +145,15 @@ var _ = Describe("SudoRequest controller", func() {
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, crb)
 				if err != nil {
+					crbs := &rbacv1.ClusterRoleBindingList{}
+					err = k8sClient.List(ctx, crbs)
+					if err == nil {
+						for _, c := range crbs.Items {
+							fmt.Println(c.Name)
+						}
+					} else {
+						fmt.Println(err)
+					}
 					return false
 				}
 				return true
