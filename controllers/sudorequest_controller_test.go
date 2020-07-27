@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	k8sudov1alpha1 "jetstack.io/k8sudo/api/v1alpha1"
@@ -484,6 +485,158 @@ func TestFindChildCRB(t *testing.T) {
 			}
 			if got, want := child, test.expectedChild; !reflect.DeepEqual(got, want) {
 				t.Errorf("wrong child: (got != want) %+v != %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestOnReady(t *testing.T) {
+	clock := FakeClock{
+		CurrentTime: time.Now(),
+	}
+	r := &SudoRequestReconciler{
+		Clock: clock,
+	}
+	sudoReq := &k8sudov1alpha1.SudoRequest{
+		Status: k8sudov1alpha1.SudoRequestStatus{
+			Expires: &metav1.Time{Time: clock.CurrentTime.Add(time.Minute)},
+		},
+	}
+	res, err := r.OnReady(sudoReq)
+	if err != nil {
+		t.Errorf("OnReady returned an error: %v", err)
+	}
+	if got, want := res.RequeueAfter, time.Minute; got != want {
+		t.Errorf("wrong requeue time: (got != want) %v != %v", got, want)
+	}
+}
+
+func TestOnPending(t *testing.T) {
+	sudoReq := &k8sudov1alpha1.SudoRequest{}
+
+	tests := []struct {
+		name         string
+		expectError  bool
+		requeue      bool
+		requeueAfter time.Duration
+		crbs         []rbacv1.ClusterRoleBinding
+	}{
+		{
+			name:         "created",
+			expectError:  false,
+			requeueAfter: time.Second,
+		},
+		{
+			name:        "already exists",
+			expectError: false,
+			requeue:     true,
+			crbs: []rbacv1.ClusterRoleBinding{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: crbName(sudoReq),
+					},
+				},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clock := FakeClock{}
+			scheme := runtime.NewScheme()
+			k8sudov1alpha1.AddToScheme(scheme)
+			rbacv1.AddToScheme(scheme)
+			client := fake.NewFakeClientWithScheme(scheme, &rbacv1.ClusterRoleBindingList{Items: test.crbs})
+			r := &SudoRequestReconciler{
+				Clock:  clock,
+				Scheme: scheme,
+				Client: client,
+			}
+			log := testinglogr.TestLogger{T: t}
+			ctx := context.Background()
+			res, err := r.OnPending(ctx, sudoReq, log)
+			if got, want := (err != nil), test.expectError; got != want {
+				t.Errorf("unexpected error status: (got != want) %t != %t: %s", got, want, err)
+			}
+			if got, want := res.RequeueAfter, test.requeueAfter; got != want {
+				t.Errorf("wrong RequeueAfter: (got != want) %s != %s", got, want)
+			}
+			if got, want := res.Requeue, test.requeue; got != want {
+				t.Errorf("wrong RequeueAfter: (got != want) %t != %t", got, want)
+			}
+			crb := rbacv1.ClusterRoleBinding{}
+			if err := client.Get(ctx, types.NamespacedName{Name: crbName(sudoReq)}, &crb); err != nil {
+				t.Errorf("failed to get crb: %s", err)
+			}
+		})
+	}
+}
+
+func TestOnExpired(t *testing.T) {
+	sudoReq := &k8sudov1alpha1.SudoRequest{}
+
+	tests := []struct {
+		name         string
+		expectError  bool
+		requeue      bool
+		requeueAfter time.Duration
+		crbName      string
+		crbs         []rbacv1.ClusterRoleBinding
+	}{
+		{
+			name:    "no associated crb",
+			crbName: "",
+		},
+		{
+			name:    "exists",
+			crbName: crbName(sudoReq),
+			crbs: []rbacv1.ClusterRoleBinding{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: crbName(sudoReq),
+					},
+				},
+			},
+		},
+		{
+			name:    "already removed",
+			crbName: crbName(sudoReq),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			clock := FakeClock{}
+			scheme := runtime.NewScheme()
+			k8sudov1alpha1.AddToScheme(scheme)
+			rbacv1.AddToScheme(scheme)
+			client := fake.NewFakeClientWithScheme(scheme, &rbacv1.ClusterRoleBindingList{Items: test.crbs})
+			r := &SudoRequestReconciler{
+				Clock:  clock,
+				Scheme: scheme,
+				Client: client,
+			}
+			log := testinglogr.TestLogger{T: t}
+			ctx := context.Background()
+			sudoReq.Status.ClusterRoleBinding = test.crbName
+			res, err := r.OnExpired(ctx, sudoReq, log)
+			if got, want := (err != nil), test.expectError; got != want {
+				t.Errorf("unexpected error status: (got != want) %t != %t: %s", got, want, err)
+			}
+			if got, want := res.RequeueAfter, test.requeueAfter; got != want {
+				t.Errorf("wrong RequeueAfter: (got != want) %s != %s", got, want)
+			}
+			if got, want := res.Requeue, test.requeue; got != want {
+				t.Errorf("wrong RequeueAfter: (got != want) %t != %t", got, want)
+			}
+			crb := rbacv1.ClusterRoleBinding{}
+			err = client.Get(ctx, types.NamespacedName{Name: crbName(sudoReq)}, &crb)
+			if err != nil {
+				if !apierrors.IsNotFound(err) {
+					t.Errorf("unexpected error fetching crb: %s", err)
+				}
+			} else {
+				t.Errorf("no error fetching crb")
 			}
 		})
 	}

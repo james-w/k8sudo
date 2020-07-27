@@ -224,6 +224,46 @@ func (r *SudoRequestReconciler) createClusterRoleBinding(sudoReq *k8sudov1alpha1
 	return crb, nil
 }
 
+func (r *SudoRequestReconciler) OnReady(sudoReq *k8sudov1alpha1.SudoRequest) (ctrl.Result, error) {
+	return ctrl.Result{RequeueAfter: sudoReq.Status.Expires.Sub(r.Now())}, nil
+}
+
+func (r *SudoRequestReconciler) OnPending(ctx context.Context, sudoReq *k8sudov1alpha1.SudoRequest, log logr.Logger) (ctrl.Result, error) {
+	crb, err := r.createClusterRoleBinding(sudoReq, log)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err = r.Create(ctx, crb); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			// Cache is updating, so we haven't realised this is
+			// our child yet, requeue so that we see the child
+			return ctrl.Result{Requeue: true}, nil
+		}
+		log.Error(err, "unable to create ClusterRoleBinding")
+		return ctrl.Result{}, err
+	}
+
+	// Requeue to update the Status to include the reference to the created CRB
+	// We wait one second to increase the chance that the CRB will be visible
+	// on the API server
+	return ctrl.Result{RequeueAfter: time.Second}, nil
+}
+
+func (r *SudoRequestReconciler) OnExpired(ctx context.Context, sudoReq *k8sudov1alpha1.SudoRequest, log logr.Logger) (ctrl.Result, error) {
+	if sudoReq.Status.ClusterRoleBinding != "" {
+		var crb rbacv1.ClusterRoleBinding
+		if err := r.Get(ctx, types.NamespacedName{Name: sudoReq.Status.ClusterRoleBinding}, &crb); err != nil {
+			return ctrl.Result{}, client.IgnoreNotFound(err)
+		}
+		if err := r.Delete(ctx, &crb); err != nil {
+			log.Error(err, "failed to delete ClusterRoleBinding")
+			return ctrl.Result{}, client.IgnoreNotFound(err)
+		}
+	}
+	return ctrl.Result{}, nil
+}
+
 func (r *SudoRequestReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.Background()
 	log := r.Log.WithValues("sudorequest", req.NamespacedName)
@@ -249,43 +289,15 @@ func (r *SudoRequestReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error)
 	}
 
 	if sudoReq.Status.Status == k8sudov1alpha1.SudoRequestStatusPending {
-		crb, err := r.createClusterRoleBinding(&sudoReq, log)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-
-		if err = r.Create(ctx, crb); err != nil {
-			if apierrors.IsAlreadyExists(err) {
-				// Cache is updating, so we haven't realised this is
-				// our child yet, requeue so that we see the child
-				return ctrl.Result{Requeue: true}, nil
-			}
-			log.Error(err, "unable to create ClusterRoleBinding")
-			return ctrl.Result{}, err
-		}
-
-		// Requeue to update the Status to include the reference to the created CRB
-		// We wait one second to increase the chance that the CRB will be visible
-		// on the API server
-		return ctrl.Result{RequeueAfter: time.Second}, nil
+		return r.OnPending(ctx, &sudoReq, log)
 	}
 
 	if sudoReq.Status.Status == k8sudov1alpha1.SudoRequestStatusReady {
-		return ctrl.Result{RequeueAfter: sudoReq.Status.Expires.Sub(r.Now())}, nil
+		return r.OnReady(&sudoReq)
 	}
 
 	if sudoReq.Status.Status == k8sudov1alpha1.SudoRequestStatusExpired {
-		if sudoReq.Status.ClusterRoleBinding != "" {
-			var crb rbacv1.ClusterRoleBinding
-			if err := r.Get(ctx, types.NamespacedName{Name: sudoReq.Status.ClusterRoleBinding}, &crb); err != nil {
-				return ctrl.Result{}, client.IgnoreNotFound(err)
-			}
-			if err := r.Delete(ctx, &crb); err != nil {
-				log.Error(err, "failed to delete ClusterRoleBinding")
-				return ctrl.Result{}, client.IgnoreNotFound(err)
-			}
-		}
-		return ctrl.Result{}, nil
+		return r.OnExpired(ctx, &sudoReq, log)
 	}
 
 	return ctrl.Result{}, nil
