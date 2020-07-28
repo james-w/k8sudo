@@ -6,6 +6,10 @@ CRD_OPTIONS ?= "crd:trivialVersions=true"
 
 TEST_ASSET_KUBE_APISERVER ?= /usr/local/bin/kube-apiserver
 TEST_ASSET_ETCD ?= /usr/local/bin/etcd
+TEST_OPTIONS ?=
+ifneq (TEST_FAILFAST,)
+TEST_OPTIONS += -failfast
+endif
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -18,10 +22,10 @@ all: manager
 
 # Run tests
 test: generate fmt vet manifests
-	go test ./controllers ./api/... -coverprofile cover.out
+	go test ./controllers ./api/... -coverprofile cover.out $(TEST_OPTIONS)
 
 integration: generate fmt vet manifests test
-	env "TEST_ASSET_KUBE_APISERVER=$(TEST_ASSET_KUBE_APISERVER)" "TEST_ASSET_ETCD=$(TEST_ASSET_ETCD)" go test ./test/integration/...
+	env "TEST_ASSET_KUBE_APISERVER=$(TEST_ASSET_KUBE_APISERVER)" "TEST_ASSET_ETCD=$(TEST_ASSET_ETCD)" go test ./test/integration/... $(TEST_OPTIONS)
 
 # Build manager binary
 manager: generate fmt vet
