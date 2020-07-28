@@ -39,6 +39,7 @@ func StartTestEnv() (*envtest.Environment, *rest.Config) {
 	By("bootstrapping test environment")
 	apiServerFlags := envtest.DefaultKubeAPIServerFlags[0 : len(envtest.DefaultKubeAPIServerFlags)-1]
 	apiServerFlags = append(apiServerFlags, "--enable-admission-plugins=ValidatingAdmissionWebhook")
+	apiServerFlags = append(apiServerFlags, "--authorization-mode=RBAC")
 	testEnv := &envtest.Environment{
 		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "..", "config", "crd", "bases")},
 		ErrorIfCRDPathMissing: true,

@@ -126,12 +126,63 @@ var _ = Describe("SudoRequest controller", func() {
 			By("Checking the status is Expired")
 			Consistently(GetStatus(ctx, lookupKey(createdSudoRequest)), duration, interval).Should(Equal(k8sudov1alpha1.SudoRequestStatusExpired))
 		})
+		It("Should set Denied if no permissions", func() {
+			By("Creating a new SudoRequest")
+			ctx := context.Background()
+			req := initSudoRequest("denied")
+			req.Spec.User = "user"
+			req.Spec.Role = "role"
+			createdSudoRequest := createSudoRequest(ctx, req, timeout, interval)
+			By("Checking the status is Denied")
+			Consistently(GetStatus(ctx, lookupKey(createdSudoRequest)), duration, interval).Should(Equal(k8sudov1alpha1.SudoRequestStatusDenied))
+		})
 		It("Should create the CRB if the request is valid", func() {
 			By("Creating a new SudoRequest")
 			ctx := context.Background()
+			roleName := "role"
+			userName := "user"
+			role := &rbacv1.ClusterRole{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: roleName,
+				},
+			}
+			Expect(k8sClient.Create(ctx, role)).Should(Succeed())
+			grantingCRName := "sudoer"
+			sudoer := &rbacv1.ClusterRole{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: grantingCRName,
+				},
+				Rules: []rbacv1.PolicyRule{
+					{
+						APIGroups:     []string{"rbac.authorization.k8s.io"},
+						Resources:     []string{"clusterroles"},
+						Verbs:         []string{"sudo"},
+						ResourceNames: []string{roleName},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, sudoer)).Should(Succeed())
+			grantingCRB := &rbacv1.ClusterRoleBinding{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "granting-crb",
+				},
+				RoleRef: rbacv1.RoleRef{
+					Name:     grantingCRName,
+					APIGroup: "rbac.authorization.k8s.io",
+					Kind:     "ClusterRole",
+				},
+				Subjects: []rbacv1.Subject{
+					{
+						Kind:     "User",
+						Name:     userName,
+						APIGroup: "rbac.authorization.k8s.io",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, grantingCRB)).Should(Succeed())
 			req := initSudoRequest("accepted")
-			req.Spec.User = "user"
-			req.Spec.Role = "role"
+			req.Spec.User = userName
+			req.Spec.Role = roleName
 			req.Spec.Expires = &metav1.Time{Time: time.Now().Add(duration).Add(2 * time.Second)}
 			createdSudoRequest := createSudoRequest(ctx, req, timeout, interval)
 			By("Checking the status is Ready")
