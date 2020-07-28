@@ -105,7 +105,10 @@ var _ = BeforeSuite(func(done Done) {
 	err := k8sudov1alpha1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
 
-	err = controllers.SetupWebhookWithManager(k8sManager)
+	err = (&controllers.SudoReqHandler{
+		Client: k8sManager.GetClient(),
+		Log:    ctrl.Log.WithName("controllers").WithName("SudoRequest"),
+	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 
 	stopManager = integration.StartManager(k8sManager)

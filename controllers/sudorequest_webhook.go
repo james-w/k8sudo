@@ -18,18 +18,15 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/go-logr/logr"
 	"k8s.io/api/admission/v1beta1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	k8sudov1alpha1 "jetstack.io/k8sudo/api/v1alpha1"
 )
-
-// log is for logging in this package.
-var sudorequestlog = logf.Log.WithName("sudorequest-resource")
 
 // +kubebuilder:webhook:verbs=create;update,path=/validate-k8sudo-jetstack-io-v1alpha1-sudorequest,mutating=false,failurePolicy=fail,groups=k8sudo.jetstack.io,resources=sudorequests,versions=v1alpha1,name=vsudorequest.kb.io
 
@@ -37,14 +34,25 @@ const (
 	SudoRequestValidateWebhookPath = "/validate-k8sudo-jetstack-io-v1alpha1-sudorequest"
 )
 
-func SetupWebhookWithManager(mgr ctrl.Manager) error {
-	mgr.GetWebhookServer().Register(SudoRequestValidateWebhookPath, &webhook.Admission{Handler: &SudoReqHandler{Client: mgr.GetClient()}})
+func (h *SudoReqHandler) SetupWithManager(mgr ctrl.Manager) error {
+	mgr.GetWebhookServer().Register(SudoRequestValidateWebhookPath, &webhook.Admission{Handler: h})
 	return nil
 }
 
 type SudoReqHandler struct {
 	Client  client.Client
 	Decoder *admission.Decoder
+	Log     logr.Logger
+}
+
+func Validate(sudoReq *k8sudov1alpha1.SudoRequest, log logr.Logger) admission.Response {
+	if sudoReq.Spec.User == "" {
+		return admission.Denied("User must be set")
+	}
+	if sudoReq.Spec.Role == "" {
+		return admission.Denied("Role must be set")
+	}
+	return admission.Allowed("")
 }
 
 func (h *SudoReqHandler) Handle(ctx context.Context, req admission.Request) admission.Response {
@@ -53,14 +61,11 @@ func (h *SudoReqHandler) Handle(ctx context.Context, req admission.Request) admi
 	if err != nil {
 		return admission.Errored(http.StatusBadRequest, err)
 	}
-	sudorequestlog.Info("Validating SudoRequest", "SudoRequest", sudoReq)
-	if req.AdmissionRequest.Operation == v1beta1.Create || req.AdmissionRequest.Operation == v1beta1.Update {
-		if sudoReq.Spec.User == "" {
-			return admission.Denied("User must be set")
-		}
-		if sudoReq.Spec.Role == "" {
-			return admission.Denied("Role must be set")
-		}
+	log := h.Log.WithValues("sudorequest", sudoReq.GetObjectMeta().GetName())
+	log.Info("Validating SudoRequest")
+	if req.AdmissionRequest.Operation == v1beta1.Create ||
+		req.AdmissionRequest.Operation == v1beta1.Update {
+		return Validate(sudoReq, log)
 	}
 	return admission.Allowed("")
 }

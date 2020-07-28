@@ -87,7 +87,10 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "SudoRequest")
 		os.Exit(1)
 	}
-	if err = controllers.SetupWebhookWithManager(mgr); err != nil {
+	if err = (&controllers.SudoReqHandler{
+		Client: mgr.GetClient(),
+		Log:    ctrl.Log.WithName("controllers").WithName("SudoRequestWebhook"),
+	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create webhook", "webhook", "SudoRequest")
 		os.Exit(1)
 	}
