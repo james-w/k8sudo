@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -27,6 +28,8 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -42,12 +45,15 @@ import (
 	// +kubebuilder:scaffold:imports
 )
 
-var cfg *rest.Config
 var k8sClient client.Client
+
+const k8sUsername = "user"
+
+var k8sRootClient client.Client
 var k8sManager ctrl.Manager
 var testEnv *envtest.Environment
 var stopManager chan struct{}
-var cleanup func() error
+var tempdir string
 
 func TestAPIs(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -99,10 +105,16 @@ func EnableWebhook() {
 var _ = BeforeSuite(func(done Done) {
 	logf.SetLogger(zap.LoggerTo(GinkgoWriter, true))
 
-	testEnv, cfg = integration.StartTestEnv()
-	k8sManager, cleanup = integration.SetupManager(cfg, true)
+	tempdir, err := ioutil.TempDir("", "k8sudo-tests-")
+	Expect(err).ToNot(HaveOccurred())
 
-	err := k8sudov1alpha1.AddToScheme(scheme.Scheme)
+	password := "pass"
+
+	testEnv = integration.StartTestEnv(tempdir, k8sUsername, password)
+	scheme := scheme.Scheme
+	k8sManager = integration.SetupManager(testEnv.Config, scheme, true, tempdir)
+
+	err = k8sudov1alpha1.AddToScheme(scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	err = (&controllers.SudoReqHandler{
@@ -127,15 +139,52 @@ var _ = BeforeSuite(func(done Done) {
 		return nil
 	}).Should(Succeed())
 
+	k8sManager.GetClient().Create(context.TODO(), &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "sudorequests-admin",
+		},
+		Rules: []rbacv1.PolicyRule{{
+			APIGroups: []string{k8sudov1alpha1.GroupVersion.Group},
+			Resources: []string{"sudorequests"},
+			Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+		}},
+	})
+	k8sManager.GetClient().Create(context.TODO(), &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "user-sudorequests-admin",
+		},
+		RoleRef: rbacv1.RoleRef{
+			Name:     "sudorequests-admin",
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:     "User",
+				Name:     k8sUsername,
+				APIGroup: "rbac.authorization.k8s.io",
+			},
+		},
+	})
+
 	EnableWebhook()
+
+	cfg := rest.CopyConfig(testEnv.SecureConfig)
+	cfg.Username = k8sUsername
+	cfg.Password = password
+	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(k8sClient).ToNot(BeNil())
+	k8sRootClient = k8sManager.GetClient()
+	Expect(k8sRootClient).ToNot(BeNil())
 
 	close(done)
 }, 60)
 
 var _ = AfterSuite(func() {
 	integration.Shutdown(testEnv, stopManager)
-	if cleanup != nil {
-		err := cleanup()
+	if tempdir != "" {
+		err := os.RemoveAll(tempdir)
 		Expect(err).ToNot(HaveOccurred())
 	}
 })

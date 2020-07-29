@@ -23,6 +23,7 @@ import (
 
 	testinglogr "github.com/go-logr/logr/testing"
 	admissionv1beta1 "k8s.io/api/admission/v1beta1"
+	authv1 "k8s.io/api/authentication/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -63,12 +64,50 @@ func TestValidate(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			log := testinglogr.TestLogger{T: t}
-			sudoReq := k8sudov1alpha1.SudoRequest{
-				Spec: test.spec,
-			}
-			resp := Validate(&sudoReq, log)
+			resp := Validate(test.spec, log)
 			if got, want := resp, test.expected; !reflect.DeepEqual(got, want) {
 				t.Errorf("unexpected response: (got != want) %v != %v", got, want)
+			}
+		})
+	}
+}
+
+func TestValidateAccess(t *testing.T) {
+	user1 := "user1"
+	user2 := "user2"
+	tests := []struct {
+		name     string
+		spec     k8sudov1alpha1.SudoRequestSpec
+		username string
+		expected admission.Response
+	}{
+		{
+			name: "same username",
+			spec: k8sudov1alpha1.SudoRequestSpec{
+				User: user1,
+			},
+			username: user1,
+			expected: admission.Allowed(""),
+		},
+		{
+			name: "different username",
+			spec: k8sudov1alpha1.SudoRequestSpec{
+				User: user2,
+			},
+			username: user1,
+			expected: admission.Denied(fmt.Sprintf("%s cannot create a SudoRequest for %s", user1, user2)),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			log := testinglogr.TestLogger{T: t}
+			h := &SudoReqHandler{
+				Log: log,
+			}
+			resp := h.ValidateAccess(test.spec, authv1.UserInfo{Username: test.username}, log)
+			if got, want := resp, test.expected; !reflect.DeepEqual(got, want) {
+				t.Errorf("wrong response: (got != want) %+v != %+v", got, want)
 			}
 		})
 	}
@@ -78,21 +117,30 @@ func TestHandle(t *testing.T) {
 	tests := []struct {
 		name      string
 		req       string
+		username  string
 		operation admissionv1beta1.Operation
 		expected  admission.Response
 	}{
 		{
 			name:      "allowed",
 			operation: admissionv1beta1.Create,
+			username:  "user",
 			req:       "{\"spec\": {\"user\": \"user\", \"role\": \"role\"}}",
 			expected:  admission.Allowed(""),
 		},
 		{
-			name:      "disallowed",
+			name:      "invalid spec",
 			operation: admissionv1beta1.Create,
 			// No user value
 			req:      "{\"spec\": {\"user\": \"\", \"role\": \"role\"}}",
 			expected: admission.Denied("User must be set"),
+		},
+		{
+			name:      "disallowed",
+			operation: admissionv1beta1.Create,
+			username:  "user1",
+			req:       "{\"spec\": {\"user\": \"user2\", \"role\": \"role\"}}",
+			expected:  admission.Denied("user1 cannot create a SudoRequest for user2"),
 		},
 		{
 			name:     "malformed",
@@ -123,6 +171,9 @@ func TestHandle(t *testing.T) {
 				Operation: test.operation,
 				Object: runtime.RawExtension{
 					Raw: []byte(test.req),
+				},
+				UserInfo: authv1.UserInfo{
+					Username: test.username,
 				},
 			}
 			resp := h.Handle(ctx, admission.Request{AdmissionRequest: req})

@@ -16,10 +16,12 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/go-logr/logr"
 	"k8s.io/api/admission/v1beta1"
+	authv1 "k8s.io/api/authentication/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -45,11 +47,18 @@ type SudoReqHandler struct {
 	Log     logr.Logger
 }
 
-func Validate(sudoReq *k8sudov1alpha1.SudoRequest, log logr.Logger) admission.Response {
-	if sudoReq.Spec.User == "" {
+func (h *SudoReqHandler) ValidateAccess(spec k8sudov1alpha1.SudoRequestSpec, userInfo authv1.UserInfo, log logr.Logger) admission.Response {
+	if spec.User != userInfo.Username {
+		return admission.Denied(fmt.Sprintf("%s cannot create a SudoRequest for %s", userInfo.Username, spec.User))
+	}
+	return admission.Allowed("")
+}
+
+func Validate(spec k8sudov1alpha1.SudoRequestSpec, log logr.Logger) admission.Response {
+	if spec.User == "" {
 		return admission.Denied("User must be set")
 	}
-	if sudoReq.Spec.Role == "" {
+	if spec.Role == "" {
 		return admission.Denied("Role must be set")
 	}
 	return admission.Allowed("")
@@ -65,7 +74,11 @@ func (h *SudoReqHandler) Handle(ctx context.Context, req admission.Request) admi
 	log.Info("Validating SudoRequest")
 	if req.AdmissionRequest.Operation == v1beta1.Create ||
 		req.AdmissionRequest.Operation == v1beta1.Update {
-		return Validate(sudoReq, log)
+		resp := Validate(sudoReq.Spec, log)
+		if !resp.Allowed {
+			return resp
+		}
+		return h.ValidateAccess(sudoReq.Spec, req.UserInfo, log)
 	}
 	return admission.Allowed("")
 }

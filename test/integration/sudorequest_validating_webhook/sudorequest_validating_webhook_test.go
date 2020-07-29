@@ -16,6 +16,7 @@ package sudorequest_validating_webhook
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo"
@@ -46,7 +47,7 @@ var _ = Describe("SudoRequest validating webhook", func() {
 		duration = 2 * time.Second
 	)
 	Context("When creating SudoRequest", func() {
-		It("Should error if User is not set", func() {
+		It("Should deny if User is not set", func() {
 			By("Creating a new SudoRequest")
 			ctx := context.Background()
 			req := initSudoRequest("no-user")
@@ -57,7 +58,7 @@ var _ = Describe("SudoRequest validating webhook", func() {
 			Expect(err.Error()).To(ContainSubstring("User must be set"))
 		})
 
-		It("Should error if Role is not set", func() {
+		It("Should deny if Role is not set", func() {
 			By("Creating a new SudoRequest")
 			ctx := context.Background()
 			req := initSudoRequest("no-role")
@@ -66,6 +67,27 @@ var _ = Describe("SudoRequest validating webhook", func() {
 			err := k8sClient.Create(ctx, req)
 			Expect(err).Should(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("Role must be set"))
+		})
+
+		It("Should deny if user doesn't match requestor", func() {
+			By("Creating a new SudoRequest")
+			ctx := context.Background()
+			req := initSudoRequest("denied-wrong-user")
+			req.Spec.Role = "role"
+			req.Spec.User = "wrong-user"
+			err := k8sClient.Create(ctx, req)
+			Expect(err).Should(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring(fmt.Sprintf("%s cannot create a SudoRequest for %s", k8sUsername, req.Spec.User)))
+		})
+
+		It("Should succeed if everything is ok", func() {
+			By("Creating a new SudoRequest")
+			ctx := context.Background()
+			req := initSudoRequest("accepted")
+			req.Spec.Role = "role"
+			req.Spec.User = k8sUsername
+			err := k8sClient.Create(ctx, req)
+			Expect(err).ShouldNot(HaveOccurred())
 		})
 	})
 })

@@ -20,6 +20,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"io/ioutil"
 	"math/big"
 	"net"
@@ -29,30 +30,32 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
 
-func StartTestEnv() (*envtest.Environment, *rest.Config) {
+func StartTestEnv(dir, username, password string) *envtest.Environment {
 	By("bootstrapping test environment")
+	authFile := filepath.Join(dir, "apiserver-auth.txt")
+	ioutil.WriteFile(authFile, []byte(fmt.Sprintf("pass,root,0\n%s,%s,1\n", password, username)), 0644)
 	apiServerFlags := envtest.DefaultKubeAPIServerFlags[0 : len(envtest.DefaultKubeAPIServerFlags)-1]
 	apiServerFlags = append(apiServerFlags, "--enable-admission-plugins=ValidatingAdmissionWebhook")
 	apiServerFlags = append(apiServerFlags, "--authorization-mode=RBAC")
+	apiServerFlags = append(apiServerFlags, fmt.Sprintf("--basic-auth-file=%s", authFile))
 	testEnv := &envtest.Environment{
 		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "..", "config", "crd", "bases")},
 		ErrorIfCRDPathMissing: true,
 		KubeAPIServerFlags:    apiServerFlags,
 	}
 
-	cfg, err := testEnv.Start()
+	_, err := testEnv.Start()
 	Expect(err).ToNot(HaveOccurred())
-	Expect(cfg).ToNot(BeNil())
 
 	// +kubebuilder:scaffold:scheme
 
-	return testEnv, cfg
+	return testEnv
 }
 
 func GenerateCerts(dir string) error {
@@ -116,34 +119,23 @@ func GenerateCerts(dir string) error {
 	return nil
 }
 
-func SetupManager(cfg *rest.Config, withCerts bool) (ctrl.Manager, func() error) {
+func SetupManager(cfg *rest.Config, scheme *runtime.Scheme, withCerts bool, dir string) ctrl.Manager {
 	By("setting up the manager")
 	options := ctrl.Options{
-		Scheme:                 scheme.Scheme,
+		Scheme:                 scheme,
 		MetricsBindAddress:     "0",
 		HealthProbeBindAddress: "0",
 		Port:                   10289,
 	}
-	tempDir := ""
 	if withCerts {
-		// Declaring err so that we don't shadow the
-		// tempDir variable so that the cleanup func works
-		var err error
-		tempDir, err = ioutil.TempDir("", "k8sudo-certs-")
+		err := GenerateCerts(dir)
 		Expect(err).ToNot(HaveOccurred())
-		err = GenerateCerts(tempDir)
-		Expect(err).ToNot(HaveOccurred())
-		options.CertDir = tempDir
+		options.CertDir = dir
 	}
 	k8sManager, err := ctrl.NewManager(cfg, options)
 	Expect(err).ToNot(HaveOccurred())
 
-	return k8sManager, func() error {
-		if tempDir != "" {
-			return os.RemoveAll(tempDir)
-		}
-		return nil
-	}
+	return k8sManager
 }
 
 func StartManager(mgr ctrl.Manager) chan struct{} {

@@ -15,12 +15,13 @@ limitations under the License.
 package sudorequest_controller
 
 import (
+	"io/ioutil"
+	"os"
 	"testing"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -34,12 +35,11 @@ import (
 	// +kubebuilder:scaffold:imports
 )
 
-var cfg *rest.Config
 var k8sClient client.Client
 var k8sManager ctrl.Manager
 var testEnv *envtest.Environment
 var stopManager chan struct{}
-var cleanup func() error
+var tempdir string
 
 func TestAPIs(t *testing.T) {
 	RegisterFailHandler(Fail)
@@ -52,16 +52,23 @@ func TestAPIs(t *testing.T) {
 var _ = BeforeSuite(func(done Done) {
 	logf.SetLogger(zap.LoggerTo(GinkgoWriter, true))
 
-	testEnv, cfg = integration.StartTestEnv()
-	k8sManager, cleanup = integration.SetupManager(cfg, false)
+	tempdir, err := ioutil.TempDir("", "k8sudo-tests-")
+	Expect(err).ToNot(HaveOccurred())
 
-	err := k8sudov1alpha1.AddToScheme(scheme.Scheme)
+	username := "user"
+	password := "pass"
+
+	testEnv := integration.StartTestEnv(tempdir, username, password)
+	scheme := scheme.Scheme
+	k8sManager := integration.SetupManager(testEnv.Config, scheme, false, tempdir)
+
+	err = k8sudov1alpha1.AddToScheme(scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	err = (&controllers.SudoRequestReconciler{
 		Client: k8sManager.GetClient(),
 		Log:    ctrl.Log.WithName("controllers").WithName("SudoRequest"),
-		Scheme: scheme.Scheme,
+		Scheme: scheme,
 	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 
@@ -75,6 +82,6 @@ var _ = BeforeSuite(func(done Done) {
 
 var _ = AfterSuite(func() {
 	integration.Shutdown(testEnv, stopManager)
-	err := cleanup()
+	err := os.RemoveAll(tempdir)
 	Expect(err).ToNot(HaveOccurred())
 })
